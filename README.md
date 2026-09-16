@@ -29,6 +29,7 @@ thumbnail-generator/
 ├── backend/             # Spring Boot backend
 ├── frontend/            # Angular frontend
 ├── docker-compose.yml   # Kafka, Zookeeper, Kafka UI
+├── screenshots/         # UI screenshots for the README
 ├── .gitignore           # Build artifacts, venv, node_modules, uploads
 └── README.md            # This file
 ```
@@ -83,6 +84,24 @@ npm start
 ```
 
 The Angular dev server runs on http://localhost:4200 by default.
+
+## Screenshots
+
+### Upload Form
+
+![Upload Form](screenshots/upload-form.png)
+
+### Style Selection
+
+![Style Selection](screenshots/style-select.png)
+
+### Resolution Selection
+
+![Resolution Selection](screenshots/resolution-select.png)
+
+### Results
+
+![Results](screenshots/results.png)
 
 ## Configuration
 
