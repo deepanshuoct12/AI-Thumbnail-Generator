@@ -148,19 +148,23 @@ stateDiagram-v2
 
 ### Upload Form
 
-![Upload Form](screenshots/upload-form.png)
+<img width="1464" height="645" alt="Screenshot 2026-09-15 at 11 54 17 PM" src="https://github.com/user-attachments/assets/4da18f5f-7f5a-4807-98f5-58c3a2bc5c3f" />
+
 
 ### Style Selection
 
-![Style Selection](screenshots/style-select.png)
+<img width="1466" height="614" alt="Screenshot 2026-09-15 at 11 54 27 PM" src="https://github.com/user-attachments/assets/e02c27f0-d80e-4e89-94dd-1a3580c69f8c" />
 
 ### Resolution Selection
 
-![Resolution Selection](screenshots/resolution-select.png)
+<img width="1466" height="645" alt="Screenshot 2026-09-15 at 11 54 33 PM" src="https://github.com/user-attachments/assets/1e50c065-3311-4fc1-8c4b-bbe1c95c4969" />
+
 
 ### Results
 
-![Results](screenshots/results.png)
+<img width="1461" height="619" alt="Screenshot 2026-09-17 at 1 00 48 AM" src="https://github.com/user-attachments/assets/896afb99-e09e-46c5-a671-566ec4578ca4" />
+
+
 
 ## Keyframe Extraction
 
