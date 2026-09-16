@@ -103,7 +103,8 @@ The Angular dev server runs on http://localhost:4200 by default.
 
 ### Results
 
-![Uploading Screenshot 2026-09-17 at 1.00.48 AM.png…]()
+<img width="1461" height="619" alt="Screenshot 2026-09-17 at 1 00 48 AM" src="https://github.com/user-attachments/assets/896afb99-e09e-46c5-a671-566ec4578ca4" />
+
 
 
 ## Configuration
