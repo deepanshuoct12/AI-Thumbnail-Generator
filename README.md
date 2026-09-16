@@ -1,16 +1,136 @@
 # AI Thumbnail Generator
 
-An end-to-end system that lets users upload videos, extracts representative frames, scores each frame with an AI service, and returns the best thumbnails.
+Upload a video and get back the best thumbnail candidates, ranked automatically.
 
-## Overview
+Instead of extracting frames at fixed intervals, this system uses FFmpeg scene-change detection to find visually distinct keyframes, then scores each one on five measurable quality signals and returns the top-ranked results.
 
-This project has three main parts:
+## How It Works
 
-- **Backend** (`backend/`) — Spring Boot service that handles video uploads, frame extraction, job management, and coordination with the AI service.
-- **AI Service** (`ai-service/`) — FastAPI service that scores images based on brightness, contrast, sharpness, colorfulness, and face presence.
-- **Frontend** (`frontend/`) — Angular app for uploading videos and viewing the generated thumbnails.
+1. The frontend loads supported styles, resolutions, and formats from `/api/config`.
+2. A user uploads a video, choosing a style, output resolution, and how many thumbnails to return.
+3. The backend validates the request, stores the file, saves a `Video` document as `PENDING`, and publishes a `ThumbnailJobEvent` to Kafka.
+4. A Kafka consumer picks up the job, extracts keyframes with FFmpeg, and persists them.
+5. Every frame is sent in a single batch to the FastAPI scoring service.
+6. Scores are written back to MongoDB and the job is marked `COMPLETED`.
+7. The frontend polls for status and renders the top-N frames sorted by score.
 
-Kafka is used to queue thumbnail jobs between the backend and the AI service, and MongoDB is used for persistence.
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Client["Client Layer"]
+        UI["Angular 22 + Material<br/>:4200"]
+    end
+
+    subgraph API["Spring Boot :8080"]
+        VC["VideoController<br/>REST endpoints"]
+        PROD["ThumbnailEventProducer"]
+        VPS["VideoProcessingService<br/>@KafkaListener · concurrency=3<br/>manual acknowledgment"]
+        FF["FfmpegService<br/>keyframe extraction"]
+        AIS["AiScoringService<br/>RestClient"]
+    end
+
+    subgraph Infra["Infrastructure"]
+        KAFKA["Kafka<br/>topic: thumbnail-jobs<br/>group: thumbnail-processors"]
+        MONGO["MongoDB<br/>videos · videoFrames · appConfig"]
+        FS["Filesystem<br/>uploads/ · frames/ per videoId"]
+    end
+
+    subgraph Scorer["AI Service :8000"]
+        FAPI["FastAPI<br/>/score · /score/batch"]
+        CV["MediaPipe · NumPy · Pillow<br/>5-signal weighted scoring"]
+    end
+
+    UI -->|"GET /api/config"| VC
+    UI -->|"POST /api/videos/upload<br/>file + style + resolution + count"| VC
+    VC -->|"validate against AppConfig"| MONGO
+    VC -->|"write video file"| FS
+    VC -->|"save Video PENDING"| MONGO
+    VC --> PROD
+    PROD -->|"ThumbnailJobEvent"| KAFKA
+
+    KAFKA -->|"consume"| VPS
+    VPS -->|"status EXTRACTING"| MONGO
+    VPS --> FF
+    FF -->|"scene-change keyframes"| FS
+    VPS -->|"save VideoFrame docs"| MONGO
+    VPS -->|"status SCORING"| MONGO
+    VPS --> AIS
+    AIS -->|"POST /score/batch multipart"| FAPI
+    FAPI --> CV
+    CV -->|"per-frame metrics"| AIS
+    AIS -->|"update frames with scores"| MONGO
+    VPS -->|"status COMPLETED / FAILED"| MONGO
+
+    UI -->|"poll status · fetch ranked frames"| VC
+
+    style UI fill:#3f51b5,color:#fff
+    style KAFKA fill:#231f20,color:#fff
+    style MONGO fill:#4db33d,color:#fff
+    style CV fill:#ffd43b,color:#000
+    style FAPI fill:#009688,color:#fff
+```
+
+### Request Flow
+
+```mermaid
+sequenceDiagram
+    actor U as User
+    participant FE as Angular
+    participant BE as Spring Boot
+    participant DB as MongoDB
+    participant K as Kafka
+    participant FM as FFmpeg
+    participant AI as FastAPI Scorer
+
+    FE->>BE: GET /api/config
+    BE->>DB: fetch AppConfig("main")
+    BE-->>FE: styles, resolutions, formats
+
+    U->>FE: Choose video, style, resolution, count
+    FE->>BE: POST /api/videos/upload
+    BE->>BE: Validate format, style,<br/>resolution, count (1-5)
+    BE->>BE: Write file to uploads/
+    BE->>DB: Save Video (PENDING)
+    BE->>K: Publish ThumbnailJobEvent
+    BE-->>FE: 200 { videoId, status }
+
+    K->>BE: Consume (group thumbnail-processors)
+    BE->>DB: status -> EXTRACTING
+    BE->>FM: extractFrames(path, videoId, resolution)
+    FM-->>BE: FrameInfo[] with pts timestamps
+    BE->>DB: Save VideoFrame documents
+    BE->>DB: status -> SCORING
+    BE->>AI: POST /score/batch (all frames, style)
+    AI-->>BE: score, sharpness, brightness,<br/>contrast, colorfulness, face_score
+    BE->>DB: Update frames with scores
+    BE->>DB: status -> COMPLETED
+    BE->>K: Manual acknowledge
+
+    loop Polling
+        FE->>BE: GET /api/videos/{id}
+        BE->>DB: Top N frames, score DESC
+        BE-->>FE: status + ranked frames
+    end
+
+    U->>FE: Click Download
+    FE->>BE: GET /api/videos/{id}/download?frameId=...
+    BE-->>U: thumbnail_{frameId}.jpg
+```
+
+### Job Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: Upload accepted
+    PENDING --> EXTRACTING: Kafka event consumed
+    EXTRACTING --> SCORING: Keyframes extracted
+    SCORING --> COMPLETED: Scores persisted
+    EXTRACTING --> FAILED: FFmpeg error
+    SCORING --> FAILED: Scoring error
+    COMPLETED --> [*]
+    FAILED --> [*]
+```
 
 ## Tech Stack
 
@@ -18,72 +138,11 @@ Kafka is used to queue thumbnail jobs between the backend and the AI service, an
 |-------|-----------|
 | Frontend | Angular 22, TypeScript, Angular Material |
 | Backend | Java 21, Spring Boot 3.2, Spring Data MongoDB, Spring Kafka |
-| AI Service | Python 3.9+, FastAPI, MediaPipe, Pillow, NumPy |
-| Infra | Docker, Docker Compose, Kafka, Zookeeper, MongoDB |
-
-## Project Structure
-
-```
-thumbnail-generator/
-├── ai-service/          # FastAPI image scoring service
-├── backend/             # Spring Boot backend
-├── frontend/            # Angular frontend
-├── docker-compose.yml   # Kafka, Zookeeper, Kafka UI
-├── screenshots/         # UI screenshots for the README
-├── .gitignore           # Build artifacts, venv, node_modules, uploads
-└── README.md            # This file
-```
-
-## Prerequisites
-
-- Java 21+
-- Maven 3.9+
-- Node.js 20+ and npm
-- Python 3.9+
-- Docker and Docker Compose
-- MongoDB (or use the Docker Compose setup once it is added)
-
-## Quick Start
-
-### 1. Start Kafka and supporting services
-
-```bash
-docker compose up -d
-```
-
-This starts Zookeeper, Kafka, and Kafka UI on http://localhost:8090.
-
-### 2. Start the AI service
-
-```bash
-cd ai-service
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python main.py
-```
-
-The AI service runs on http://localhost:8000.
-
-### 3. Start the backend
-
-```bash
-cd backend
-mvn clean install
-mvn spring-boot:run
-```
-
-The backend runs on http://localhost:8080.
-
-### 4. Start the frontend
-
-```bash
-cd frontend
-npm install
-npm start
-```
-
-The Angular dev server runs on http://localhost:4200 by default.
+| AI Service | Python, FastAPI, MediaPipe, Pillow, NumPy |
+| Video Processing | FFmpeg |
+| Messaging | Apache Kafka |
+| Database | MongoDB |
+| Local Infra | Docker Compose |
 
 ## Screenshots
 
@@ -103,74 +162,242 @@ The Angular dev server runs on http://localhost:4200 by default.
 
 ![Results](screenshots/results.png)
 
+## Keyframe Extraction
+
+Rather than sampling at a fixed rate, FFmpeg is asked for frames that are either I-frames or represent a significant scene change:
+
+```
+-vf select='eq(pict_type,I)+gt(scene,0.3)',showinfo,scale=<width>:-1
+-fps_mode vfr -q:v 2
+```
+
+`showinfo` output is parsed to recover each frame's `pts_time`, so every extracted frame keeps its real timestamp in the source video. Output width is derived from the requested resolution with height auto-scaled to preserve aspect ratio:
+
+| Resolution | Width |
+|-----------|-------|
+| 360p | 640 |
+| 480p | 854 |
+| 720p | 1280 |
+| 1080p | 1920 |
+
+## Scoring
+
+Each frame is evaluated on five signals, normalised to 0-100:
+
+| Signal | Method |
+|--------|--------|
+| Sharpness | Variance of the gradient magnitude, to penalise motion blur |
+| Brightness | Distance of mean luminance from mid-grey |
+| Contrast | Standard deviation of the luminance channel |
+| Colorfulness | Hasler-Süsstrunk style red-green / yellow-blue opponent metric |
+| Face presence | MediaPipe face detection, weighted by bounding-box area and confidence |
+
+### Style Presets
+
+The final score is a weighted sum, and the weights change per style. `dark` and `bright` also invert or favour raw luminance rather than mid-grey balance.
+
+| Style | Emphasis |
+|-------|----------|
+| `natural` | Balanced across all signals |
+| `bright` | Favours high luminance |
+| `dark` | Favours low luminance |
+| `colorful` | Heavily weights colorfulness |
+| `sharp` | Heavily weights sharpness |
+| `face-focus` | Heavily weights face presence |
+
+Weights live in `ai-service/main.py` and are straightforward to tune.
+
+## Project Structure
+
+```
+thumbnail-generator/
+├── ai-service/            # FastAPI scoring service
+│   ├── main.py
+│   └── requirements.txt
+├── backend/               # Spring Boot backend
+│   ├── pom.xml
+│   └── src/main/java/com/thumbnailgen/
+│       ├── config/        # Kafka, CORS, AppConfig seeding
+│       ├── controllers/   # REST API + response DTOs
+│       ├── entities/      # Video, VideoFrame, AppConfig, status enums
+│       ├── events/        # ThumbnailJobEvent
+│       ├── repositories/  # Spring Data Mongo repositories
+│       └── services/      # FFmpeg, scoring client, Kafka producer/consumer
+├── frontend/              # Angular frontend
+├── screenshots/           # README images
+├── docker-compose.yml     # Zookeeper, Kafka, Kafka UI
+└── README.md
+```
+
+## Prerequisites
+
+- Java 21+
+- Maven 3.9+
+- Node.js 20+ and npm
+- Python 3.9+
+- FFmpeg available on `PATH`
+- Docker and Docker Compose
+- MongoDB running on `localhost:27017`
+
+Verify FFmpeg first, since extraction fails without it:
+
+```bash
+ffmpeg -version
+```
+
+## Getting Started
+
+### 1. Start Kafka
+
+```bash
+docker compose up -d
+```
+
+This brings up Zookeeper, Kafka on `localhost:9092`, and Kafka UI on http://localhost:8090.
+
+MongoDB is not yet part of the Compose file, so start it separately:
+
+```bash
+brew services start mongodb-community
+```
+
+### 2. Start the AI service
+
+```bash
+cd ai-service
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python main.py
+```
+
+Runs on http://localhost:8000. Check it with `curl http://localhost:8000/health`.
+
+### 3. Start the backend
+
+```bash
+cd backend
+mvn spring-boot:run
+```
+
+Runs on http://localhost:8080. On first boot, `AppConfigSeeder` writes the default supported formats, styles, and resolutions into MongoDB.
+
+### 4. Start the frontend
+
+```bash
+cd frontend
+npm install
+npm start
+```
+
+Runs on http://localhost:4200.
+
+## API
+
+### Backend (`:8080`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/config` | Supported formats, styles, and resolutions |
+| `POST` | `/api/videos/upload` | Multipart upload: `file`, `style`, `resolution`, `count` |
+| `GET` | `/api/videos/{id}` | Job status plus top-N frames ranked by score |
+| `GET` | `/api/videos/{videoId}/frame/{frameId}` | Frame image as JPEG |
+| `GET` | `/api/videos/{videoId}/download?frameId=` | Download a thumbnail as an attachment |
+
+### AI Service (`:8000`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Health check |
+| `POST` | `/score?style=` | Score a single image |
+| `POST` | `/score/batch?style=` | Score multiple images in one request |
+
+Example:
+
+```bash
+curl -X POST "http://localhost:8080/api/videos/upload" \
+  -F "file=@sample.mp4" \
+  -F "style=dark" \
+  -F "resolution=480p" \
+  -F "count=3"
+```
+
 ## Configuration
 
 ### Backend
 
-Edit `backend/src/main/resources/application.yml`:
+`backend/src/main/resources/application.yml`:
 
 ```yaml
+spring:
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/thumbnaildb
+  kafka:
+    bootstrap-servers: localhost:9092
+
 app:
-  upload-dir: /path/to/uploads
-  frames-dir: /path/to/frames
+  upload-dir: /absolute/path/to/uploads
+  frames-dir: /absolute/path/to/frames
   ai-service:
     url: http://localhost:8000
   topic: thumbnail-jobs
 ```
 
-### AI Service
+`upload-dir` and `frames-dir` are currently absolute paths and need to be changed for your machine.
 
-The AI service can be configured via query parameters:
-
-- `style` — scoring style. Options: `natural`, `bright`, `dark`, `colorful`, `sharp`, `face-focus`.
+Upload limits are set to 500MB for both multipart and Tomcat form POST size.
 
 ### Frontend
 
-Update `frontend/src/app/core/environment/environment.ts` if your backend URL differs from the default.
+`frontend/src/app/core/environment/environment.ts`:
 
-## API Highlights
+```ts
+export const environment = {
+  production: false,
+  apiUrl: 'http://localhost:8080/api'
+};
+```
 
-### Backend
+### Runtime options
 
-- `POST /api/videos/upload` — Upload a video.
-- `GET  /api/videos/{id}/status` — Check processing status.
-- `GET  /api/videos/{id}/frames` — Get extracted frames and scores.
+Supported formats, styles, and resolutions are stored in the `appConfig` MongoDB document rather than hardcoded, so they can be changed without a redeploy. Defaults:
 
-### AI Service
+- **Formats:** mp4, mov, avi, mkv, webm
+- **Styles:** natural, dark, bright, colorful, sharp, face-focus
+- **Resolutions:** 360p, 480p, 720p, 1080p
+- **Count:** 1 to 5 thumbnails per request
 
-- `GET  /health` — Health check.
-- `POST /score` — Score a single image.
-- `POST /score/batch` — Score multiple images.
+## Design Notes
 
-## Scoring Weights
+**Kafka between upload and processing.** Frame extraction is a long, CPU-bound subprocess call, while scoring is a separate workload with different resource needs. Decoupling them through a topic keeps uploads responsive and lets each side scale independently.
 
-The AI service combines the following features with style-specific weights:
+**Manual acknowledgment.** Auto-commit is disabled and offsets are acknowledged only after a job reaches a terminal state, so a crash mid-processing does not silently drop the job.
 
-- Sharpness
-- Brightness
-- Contrast
-- Colorfulness
-- Face presence
+**Consumer concurrency of 3.** Three listener threads process jobs in parallel from the `thumbnail-processors` group.
 
-You can tune these in `ai-service/main.py`.
+**Batch scoring.** All frames for a video are sent in a single multipart request rather than one call per frame, which avoids per-request overhead across the service boundary.
 
-## Ignored Files
+**Database-driven configuration.** The frontend fetches its dropdown options from the backend, so the UI, validation, and scoring service all agree on a single source of truth.
 
-The `.gitignore` excludes build artifacts and local data:
+## Known Limitations
 
-- `target/`, `node_modules/`, `.venv/`
-- `__pycache__/`, `.DS_Store`, `.idea/`, `.vscode/`
-- `uploads/`, `frames/`, `thumbnails/`
-- `.env` files
+- `upload-dir` and `frames-dir` are absolute paths in `application.yml` and must be edited per machine.
+- MongoDB is not included in `docker-compose.yml`.
+- Scene-change detection can return a large number of frames for long or fast-cut videos, since extraction is not capped.
+- Scoring uses hand-tuned weights over classical image metrics plus MediaPipe face detection; there is no learned ranking model.
+- No automated tests yet.
 
-## TODO / Future Improvements
+## Roadmap
 
 - [ ] Add MongoDB to `docker-compose.yml`
-- [ ] Add tests for the backend, AI service, and frontend
-- [ ] Add video preview in the frontend
-- [ ] Support more scoring styles or custom weights
-- [ ] Add CI/CD pipeline
+- [ ] Make upload and frame directories relative or container-friendly
+- [ ] Cap the number of extracted frames for long videos
+- [ ] Add CLIP embeddings for semantic relevance to the video's subject
+- [ ] Replace polling with WebSocket or SSE status updates
+- [ ] Add tests across backend, AI service, and frontend
+- [ ] CI pipeline and containerise all three services
 
 ## License
 
-Add your license here.
+Not yet licensed.
