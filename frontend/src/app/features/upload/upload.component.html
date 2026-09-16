@@ -1,0 +1,34 @@
+<mat-card class="upload-card">
+  <mat-card-title>Upload Video</mat-card-title>
+  <mat-card-content>
+    <form [formGroup]="uploadForm" (ngSubmit)="submit()">
+      <div class="file-field">
+        <input type="file" accept="video/*" (change)="onFileChange($event)" />
+      </div>
+
+      <mat-form-field appearance="outline">
+        <mat-label>Style</mat-label>
+        <mat-select formControlName="style">
+          <mat-option *ngFor="let s of config?.supportedStyles" [value]="s">{{ s }}</mat-option>
+        </mat-select>
+      </mat-form-field>
+
+      <mat-form-field appearance="outline">
+        <mat-label>Resolution</mat-label>
+        <mat-select formControlName="resolution">
+          <mat-option *ngFor="let r of config?.supportedResolutions" [value]="r">{{ r }}</mat-option>
+        </mat-select>
+      </mat-form-field>
+
+      <mat-form-field appearance="outline">
+        <mat-label>Count</mat-label>
+        <input matInput type="number" formControlName="count" min="1" max="5" />
+      </mat-form-field>
+
+      <button mat-raised-button color="primary" type="submit" [disabled]="loading">Upload</button>
+    </form>
+
+    <app-loader *ngIf="loading" message="Uploading..."></app-loader>
+    <app-error-message *ngIf="error" [message]="error"></app-error-message>
+  </mat-card-content>
+</mat-card>

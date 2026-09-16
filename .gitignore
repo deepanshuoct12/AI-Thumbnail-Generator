@@ -1,0 +1,51 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+.project
+.classpath
+.settings/
+.apt_generated/
+.factorypath/
+
+# Java / Maven
+**/target/
+**/build/
+.mvn/wrapper/maven-wrapper.jar
+*.class
+*.war
+*.jar
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.env
+.env.local
+*.db
+*.sqlite
+
+# Node / Angular
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+dist/
+tmp/
+out-tsc/
+.angular/cache/
+
+# Local data / uploads
+uploads/
+frames/
+thumbnails/
+
+# Logs
+*.log

@@ -1,0 +1,30 @@
+spring:
+  application:
+    name: thumbnail-backend
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/thumbnaildb
+  servlet:
+    multipart:
+      max-file-size: 500MB
+      max-request-size: 500MB
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      acks: all
+    consumer:
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+
+server:
+  port: 8080
+  tomcat:
+    max-http-form-post-size: 500MB
+    max-swallow-size: 500MB
+
+app:
+  upload-dir: /Users/deepanshu/Downloads/thumbnail-generator/uploads
+  frames-dir: /Users/deepanshu/Downloads/thumbnail-generator/frames
+  ai-service:
+    url: http://localhost:8000
+  topic: thumbnail-jobs

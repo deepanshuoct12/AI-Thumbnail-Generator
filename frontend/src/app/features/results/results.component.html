@@ -1,0 +1,34 @@
+<mat-card *ngIf="!video && loading" class="results-card">
+  <app-loader message="Processing..."></app-loader>
+</mat-card>
+
+<mat-card *ngIf="video" class="results-card">
+  <mat-card-title>Status: {{ video.status }}</mat-card-title>
+  <mat-card-subtitle>Style: {{ video.style }} | Resolution: {{ video.resolution }} | Count: {{ video.count }}</mat-card-subtitle>
+
+  <mat-card-content>
+    <app-error-message *ngIf="error" [message]="error"></app-error-message>
+
+    <div *ngIf="video.status === 'PENDING' || video.status === 'EXTRACTING' || video.status === 'SCORING'" class="status">
+      <mat-spinner diameter="40"></mat-spinner>
+      <span>{{ video.status }}...</span>
+    </div>
+
+    <div *ngIf="video.status === 'COMPLETED'" class="frames">
+      <div *ngFor="let f of video.frames" class="frame">
+        <img [src]="frameUrl(f.id)" [alt]="f.framePath" />
+        <div class="scores">
+          <p><strong>Score:</strong> {{ f.score }}</p>
+          <p>Sharpness: {{ f.sharpness }}</p>
+          <p>Brightness: {{ f.brightness }}</p>
+          <p>Contrast: {{ f.contrast }}</p>
+          <p>Colorfulness: {{ f.colorfulness }}</p>
+          <p>Face Score: {{ f.faceScore }}</p>
+        </div>
+        <button mat-raised-button color="primary" (click)="download(f.id)">Download</button>
+      </div>
+    </div>
+
+    <app-error-message *ngIf="video.status === 'FAILED'" message="Processing failed. Please try again."></app-error-message>
+  </mat-card-content>
+</mat-card>
