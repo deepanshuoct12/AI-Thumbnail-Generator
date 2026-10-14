@@ -2,6 +2,7 @@ package com.thumbnailgen.services;
 
 import com.thumbnailgen.services.dto.ScoreBatchResponse;
 import com.thumbnailgen.services.dto.ScoreResponse;
+import io.micrometer.core.annotation.Timed;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.http.MediaType;
@@ -22,6 +23,7 @@ public class AiScoringService {
         this.restClient = RestClient.create(aiUrl);
     }
 
+    @Timed(value = "thumbnail.scoring", description = "Time spent scoring frames in the AI service")
     public List<ScoreResponse> scoreFrames(List<Path> framePaths, String style) {
         MultiValueMap<String, Object> parts = new LinkedMultiValueMap<>();
         for (Path p : framePaths) {

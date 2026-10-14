@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Spring Boot runs on the host, not in Docker, so it is reached
+  # through host.docker.internal rather than localhost.
+  - job_name: thumbnail-backend
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+
+  - job_name: ai-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:8000']
+
+  - job_name: kafka
+    static_configs:
+      - targets: ['kafka-exporter:9308']

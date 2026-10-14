@@ -22,6 +22,23 @@ server:
     max-http-form-post-size: 500MB
     max-swallow-size: 500MB
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: thumbnail-backend
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        thumbnail.extraction: true
+        thumbnail.scoring: true
+
 app:
   upload-dir: /Users/deepanshu/Downloads/thumbnail-generator/uploads
   frames-dir: /Users/deepanshu/Downloads/thumbnail-generator/frames

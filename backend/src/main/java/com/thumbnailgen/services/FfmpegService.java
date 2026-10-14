@@ -1,5 +1,6 @@
 package com.thumbnailgen.services;
 
+import io.micrometer.core.annotation.Timed;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -44,6 +45,7 @@ public class FfmpegService {
         return dir;
     }
 
+    @Timed(value = "thumbnail.extraction", description = "Time spent extracting keyframes with ffmpeg")
     public List<FrameInfo> extractFrames(Path video, String videoId, String resolution) throws Exception {
         Path outputDir = getVideoFramesDir(videoId);
         Path pattern = outputDir.resolve("frame-%04d.jpg");

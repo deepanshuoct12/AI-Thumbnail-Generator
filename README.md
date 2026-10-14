@@ -142,6 +142,7 @@ stateDiagram-v2
 | Video Processing | FFmpeg |
 | Messaging | Apache Kafka |
 | Database | MongoDB |
+| Monitoring | Prometheus, Grafana, Micrometer |
 | Local Infra | Docker Compose |
 
 ## Screenshots
@@ -229,7 +230,12 @@ thumbnail-generator/
 │       └── services/      # FFmpeg, scoring client, Kafka producer/consumer
 ├── frontend/              # Angular frontend
 ├── screenshots/           # README images
-├── docker-compose.yml     # Zookeeper, Kafka, Kafka UI
+├── monitoring/            # Prometheus config + Grafana provisioning
+│   ├── prometheus.yml
+│   └── grafana/provisioning/
+│       ├── datasources/   # Prometheus datasource
+│       └── dashboards/    # Thumbnail Pipeline dashboard
+├── docker-compose.yml     # Kafka, Prometheus, Grafana, exporters
 └── README.md
 ```
 
@@ -257,7 +263,7 @@ ffmpeg -version
 docker compose up -d
 ```
 
-This brings up Zookeeper, Kafka on `localhost:9092`, and Kafka UI on http://localhost:8090.
+This brings up Zookeeper, Kafka on `localhost:9092`, Kafka UI on http://localhost:8090, plus the monitoring stack: kafka-exporter, Prometheus on http://localhost:9090, and Grafana on http://localhost:3000.
 
 MongoDB is not yet part of the Compose file, so start it separately:
 
@@ -307,12 +313,15 @@ Runs on http://localhost:4200.
 | `GET` | `/api/videos/{id}` | Job status plus top-N frames ranked by score |
 | `GET` | `/api/videos/{videoId}/frame/{frameId}` | Frame image as JPEG |
 | `GET` | `/api/videos/{videoId}/download?frameId=` | Download a thumbnail as an attachment |
+| `GET` | `/actuator/health` | Health check |
+| `GET` | `/actuator/prometheus` | Prometheus metrics |
 
 ### AI Service (`:8000`)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/health` | Health check |
+| `GET` | `/metrics` | Prometheus metrics |
 | `POST` | `/score?style=` | Score a single image |
 | `POST` | `/score/batch?style=` | Score multiple images in one request |
 
@@ -325,6 +334,119 @@ curl -X POST "http://localhost:8080/api/videos/upload" \
   -F "resolution=480p" \
   -F "count=3"
 ```
+
+## Monitoring
+
+Prometheus scrapes metrics from the backend, the AI service, and Kafka. Grafana visualises them with a pre-provisioned dashboard.
+
+```mermaid
+flowchart LR
+    BE["Spring Boot<br/>/actuator/prometheus"] --> P["Prometheus<br/>:9090"]
+    AI["FastAPI<br/>/metrics"] --> P
+    KE["kafka-exporter<br/>:9308"] --> P
+    P --> G["Grafana<br/>:3000"]
+
+    style P fill:#e6522c,color:#fff
+    style G fill:#f46800,color:#fff
+```
+
+Prometheus pulls on a 10s interval; nothing is pushed by the applications.
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Grafana | http://localhost:3000 | `admin` / `admin` |
+| Prometheus | http://localhost:9090 | none |
+| Kafka UI | http://localhost:8090 | none |
+
+The **Thumbnail Pipeline** dashboard and the Prometheus datasource are provisioned automatically from `monitoring/grafana/provisioning/`, so no manual setup is needed.
+
+### Viewing metrics in Grafana
+
+#### 1. Start Grafana
+
+Grafana and Prometheus start together with Kafka:
+
+```bash
+docker compose up -d
+```
+
+Start the backend (`:8080`) and AI service (`:8000`) too, since they are what Prometheus scrapes (see [Getting Started](#getting-started)).
+
+#### 2. Open and log in
+
+1. Open http://localhost:3000.
+2. Log in with `admin` / `admin` (you can skip the password change prompt).
+
+#### 3. Where to see the metrics
+
+1. In the left menu, click **Dashboards**.
+2. Open **Thumbnail Pipeline**. It shows the custom pipeline metrics plus JVM, HTTP, and Kafka metrics.
+3. To run your own queries, click **Explore** in the left menu, pick the **Prometheus** datasource, and enter a query such as `thumbnail_jobs_total`.
+4. Upload a video at http://localhost:4200. The pipeline metrics only show data after at least one job has run.
+
+You can also view raw metrics without Grafana:
+
+| What | URL |
+|------|-----|
+| Prometheus targets and health | http://localhost:9090/targets |
+| Prometheus query UI | http://localhost:9090/graph |
+| Backend raw metrics | http://localhost:8080/actuator/prometheus |
+| AI service raw metrics | http://localhost:8000/metrics |
+
+#### Troubleshooting
+
+- **Dashboard is empty:** set the time range (top right) to **Last 15 minutes** and make sure a video has been uploaded.
+- **Target shows `DOWN` at http://localhost:9090/targets:** start or restart the backend or AI service.
+- **Cannot log in with `admin` / `admin`:** the password was changed earlier and is stored in the `grafana-data` volume, because the compose default only applies on first start. Reset it without losing data:
+
+  ```bash
+  docker compose exec grafana grafana cli admin reset-admin-password admin
+  ```
+
+### Viewing Kafka in Kafka UI
+
+Kafka UI starts with `docker compose up -d` and needs no login.
+
+1. Open http://localhost:8090.
+2. Click the **local** cluster on the dashboard.
+3. In the left menu, click **Topics** and open `thumbnail-jobs` to see the job messages published by the backend on each upload (open the **Messages** tab).
+4. Click **Consumers** and open `thumbnail-processors` to see the consumer group, its partitions, and its lag.
+
+Upload a video at http://localhost:4200 first, otherwise the topic will have no messages. If the `thumbnail-jobs` topic is missing, it is created automatically on the first upload.
+
+### Custom metrics
+
+Beyond the default JVM, HTTP, MongoDB, and Kafka client metrics, the pipeline is instrumented with:
+
+| Metric | Type | Tags | Purpose |
+|--------|------|------|---------|
+| `thumbnail_extraction_seconds` | timer | — | Duration of FFmpeg keyframe extraction |
+| `thumbnail_scoring_seconds` | timer | — | Duration of the AI scoring call |
+| `thumbnail_frames_extracted` | summary | `resolution` | How many keyframes scene detection produced |
+| `thumbnail_jobs_total` | counter | `status`, `style`, `resolution` | Job outcomes |
+
+These matter because the upload endpoint returns in milliseconds while the real work happens asynchronously in the Kafka consumer. HTTP metrics alone would show none of it.
+
+Example queries:
+
+```promql
+# Average extraction time, split by resolution
+sum by (resolution) (rate(thumbnail_extraction_seconds_sum[5m]))
+  / sum by (resolution) (rate(thumbnail_extraction_seconds_count[5m]))
+
+# Job failure ratio
+sum(rate(thumbnail_jobs_total{status="failed"}[5m]))
+  / sum(rate(thumbnail_jobs_total[5m]))
+
+# Consumer lag - are the 3 listener threads keeping up?
+kafka_consumergroup_lag{consumergroup="thumbnail-processors"}
+```
+
+### Note on target addresses
+
+The backend and AI service run on the host while Prometheus runs in Docker, so `monitoring/prometheus.yml` targets `host.docker.internal` rather than `localhost`. The `prometheus` service declares `extra_hosts: host.docker.internal:host-gateway` so this resolves on Linux as well as macOS.
+
+Check target health at http://localhost:9090/targets. If the backend or AI service shows `DOWN` with a 404, they are running without the instrumentation and need restarting.
 
 ## Configuration
 

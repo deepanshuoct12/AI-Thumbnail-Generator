@@ -4,6 +4,7 @@ from PIL import Image
 import numpy as np
 import mediapipe as mp
 from io import BytesIO
+from prometheus_fastapi_instrumentator import Instrumentator
 import uvicorn
 
 app = FastAPI(title="AI Thumbnail Scorer")
@@ -14,6 +15,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
 mp_face_detection = mp.solutions.face_detection.FaceDetection(min_detection_confidence=0.3)
 

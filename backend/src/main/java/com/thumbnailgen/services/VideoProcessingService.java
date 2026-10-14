@@ -7,6 +7,7 @@ import com.thumbnailgen.events.ThumbnailJobEvent;
 import com.thumbnailgen.repositories.VideoFrameRepository;
 import com.thumbnailgen.repositories.VideoRepository;
 import com.thumbnailgen.services.dto.ScoreResponse;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -28,15 +29,18 @@ public class VideoProcessingService {
     private final VideoFrameRepository frameRepository;
     private final FfmpegService ffmpegService;
     private final AiScoringService aiScoringService;
+    private final MeterRegistry meterRegistry;
 
     public VideoProcessingService(VideoRepository videoRepository,
                                   VideoFrameRepository frameRepository,
                                   FfmpegService ffmpegService,
-                                  AiScoringService aiScoringService) {
+                                  AiScoringService aiScoringService,
+                                  MeterRegistry meterRegistry) {
         this.videoRepository = videoRepository;
         this.frameRepository = frameRepository;
         this.ffmpegService = ffmpegService;
         this.aiScoringService = aiScoringService;
+        this.meterRegistry = meterRegistry;
     }
 
     @KafkaListener(topics = "${app.topic}", groupId = "thumbnail-processors", concurrency = "3")
@@ -48,6 +52,9 @@ public class VideoProcessingService {
             videoRepository.save(video);
 
             List<FfmpegService.FrameInfo> frames = ffmpegService.extractFrames(Path.of(video.getVideoPath()), videoId, video.getResolution());
+
+            meterRegistry.summary("thumbnail.frames.extracted", "resolution", video.getResolution())
+                .record(frames.size());
 
             Map<String, VideoFrame> frameMap = new HashMap<>();
             for (FfmpegService.FrameInfo info : frames) {
@@ -85,6 +92,12 @@ public class VideoProcessingService {
             video.setStatus(VideoStatus.FAILED);
         }
         videoRepository.save(video);
+
+        meterRegistry.counter("thumbnail.jobs",
+            "status", video.getStatus().name().toLowerCase(),
+            "style", video.getStyle(),
+            "resolution", video.getResolution()).increment();
+
         ack.acknowledge();
     }
 }
